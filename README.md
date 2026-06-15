@@ -33,7 +33,6 @@ We use the **WELFake** dataset (Verma et al., 2021), hosted on Kaggle and mirror
 - **Features:** `title`, `text` (body), `label` (1 = real, 0 = fake)
 - **Construction:** Merged from four older datasets (Kaggle, McIntire, Reuters, BuzzFeed Political) so no single source dominates, reducing overfitting risk.
 
-**Backup plan:** If WELFake has unfixable problems, we fall back to the [ISOT Fake News dataset](https://www.uvic.ca/ecs/ece/isot/datasets/fake-news/index.php) from the University of Victoria.
 
 ### Known Risk: Label Leakage
 
