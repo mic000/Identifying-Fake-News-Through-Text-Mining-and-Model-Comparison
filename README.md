@@ -1,6 +1,6 @@
 # Identifying Fake News Through Text Mining and Model Comparison
 
-A machine learning project for CSC503 that detects fake news articles using only the text content of the article (title and body), without relying on author name or source. We build a full text-mining pipeline and compare several classical ML models on the [WELFake](https://www.kaggle.com/datasets/saurabhshahane/fake-news-classification) dataset.
+A machine learning project that detects fake news articles using only the text content of the article (title and body), without relying on author name or source. We build a full text-mining pipeline and compare several classical ML models on the [WELFake](https://www.kaggle.com/datasets/saurabhshahane/fake-news-classification) dataset.
 
 > **Status:** 🚧 Project setup — implementation has not started yet. This README will be expanded as the project progresses.
 
@@ -84,42 +84,16 @@ A more complex model is considered worth keeping only if it gives a meaningful i
 
 ---
 
-## Project Timeline
-
-| Date | Stage |
-|---|---|
-| **Jun 15** | Kickoff meeting — discuss EDA findings, agree on cleaning rules |
-| **Jun 15 – 21** | Text cleaning and preprocessing |
-| **Jun 22** | Feature extraction (BoW vs. TF-IDF, unigrams vs. bigrams, 3 input settings) |
-| **Jun 29** | Initial model comparison on validation set; drop weak models |
-| **Jul 6** | Final training, test-set evaluation, error analysis |
-| **Jul 7+** | Report writing, slides, presentation practice |
-
-We aim to finish all technical work at least one week before the final presentation.
-
----
-
 ## Planned Repository Structure
 
 ```
 .
-├── data/                  # Raw and processed data (not committed; see download instructions)
+├── data/                  
 │   ├── raw/
 │   └── processed/
-├── notebooks/             # Jupyter notebooks for EDA and experiments
+├── notebooks/            
 │   ├── 01_eda.ipynb
-│   ├── 02_preprocessing.ipynb
-│   ├── 03_features.ipynb
-│   └── 04_models.ipynb
-├── src/
-│   ├── data/              # Loading and splitting
-│   ├── preprocessing/     # Text cleaning pipeline
-│   ├── features/          # BoW, TF-IDF, PCA
-│   ├── models/            # Logistic Regression, NB, KNN, SVM, Decision Tree, RF
-│   └── evaluation/        # Metrics, confusion matrices, error analysis
-├── results/               # Saved metrics, plots, confusion matrices
-├── report/                # Final report and figures
-├── requirements.txt
+|
 └── README.md
 ```
 
@@ -127,29 +101,29 @@ We aim to finish all technical work at least one week before the final presentat
 
 ## Task Breakdown
 
-### Part 1 — Dataset, Data Quality & EDA (Wenbo)
+### Part 1 — Dataset, Data Quality & EDA 
 - Load and inspect the WELFake dataset
 - Analyze class distribution, missing values, duplicates
 - Identify potential label leakage
 - Produce visualizations
 
-### Part 2 — Text Preprocessing Pipeline (Arunkumar)
+### Part 2 — Text Preprocessing Pipeline 
 - Clean and standardize raw text
 - Handle title and body consistently
 - Support all three input configurations
 - Ensure reproducibility across experiments
 
-### Part 3 — Feature Engineering & Dimensionality Reduction (Yashwanthkrishna)
+### Part 3 — Feature Engineering & Dimensionality Reduction 
 - Implement BoW and TF-IDF
 - Build feature matrices for all input settings
 - Apply PCA and evaluate its impact on high-dimensional text features
 
-### Part 4 — Baseline & Classical Models (Etta)
+### Part 4 — Baseline & Classical Models
 - Logistic Regression (baseline), Naive Bayes, KNN
 - Hyperparameter tuning on validation set
 - Evaluate KNN sensitivity to dimensionality and PCA
 
-### Part 5 — Advanced Models, Evaluation & Final Analysis (Ming)
+### Part 5 — Advanced Models, Evaluation & Final Analysis
 - Linear SVM, Decision Tree, Random Forest
 - Full evaluation (Accuracy, Precision, Recall, F1)
 - Confusion matrices and error analysis
@@ -170,18 +144,6 @@ git clone <repo-url>
 cd fake-news-detection
 pip install -r requirements.txt
 ```
-
----
-
-## References
-
-1. Verma, P. K., Agrawal, P., Amorim, I., & Prodan, R. (2021). *WELFake: Word Embedding Over Linguistic Features for Fake News Detection.* IEEE Transactions on Computational Social Systems, 8(4), 881–893.
-2. Ahmed, H., Traore, I., & Saad, S. (2017). *Detection of Online Fake News Using N-Gram Analysis and Machine Learning Techniques.* ISDDC 2017, LNCS vol. 10618, pp. 127–138. Springer, Cham.
-3. Alshuwaier, F. A., & Alsulaiman, F. A. (2025). *Fake News Detection Using Machine Learning and Deep Learning Algorithms: A Comprehensive Review and Future Perspectives.* Computers, 14(9), 394.
-4. scikit-learn documentation — text feature extraction and classification models.
-5. CSC503 course materials.
-
----
 
 ## Course
 
