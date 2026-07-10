@@ -1,0 +1,7 @@
+Measure,Value
+Duplicate records beyond first copy,8458.0
+Duplicate percentage,11.73
+Number of duplicate article groups,7903.0
+Largest duplicate group size,8.0
+Duplicate groups with conflicting labels,0.0
+Unique articles after exact deduplication,63676.0
