@@ -11,7 +11,6 @@ A machine learning project that detects fake news articles using only the text c
 | Name 
 | Wenbo Wu 
 | Arunkumar Krishnamoorthy
-| Yashwanthkrishna Nagharaj 
 | Etta Zhang 
 | Ming Chen 
 
