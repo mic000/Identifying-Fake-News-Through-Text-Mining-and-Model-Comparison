@@ -24,11 +24,27 @@ Outputs (all under --output-dir):
     (SVD/PCA is only computed on the tfidf_uni_bigram representation,
      see report for justification):
         features_reduced/<setting>_svd_<split>.npz    (dense, sparse-saved)
-        features_reduced/<setting>_svd_<split>.csv    (dense CSV, for KNN)
+        features_reduced/<setting>_svd_<split>.csv    (dense CSV, for KNN;
+            includes an `article_id` column for joining -- this is an ID,
+            not a model feature, and must be dropped before training)
         features_reduced/<setting>_svd_explained_variance.json
 
     feature_engineering_report.json
-        Summary of vocabulary sizes, matrix shapes, explained variance, etc.
+        Summary of vocabulary sizes, matrix shapes, explained variance,
+        sampling method used, and sample-vs-population length checks.
+
+Optional class-balanced downsampling (--target-per-class):
+    Selects an EXACT number of articles per label (e.g. 3000 real +
+    3000 fake) using length-quantile-stratified sampling, so the
+    downsampled subset's word-count distribution (and therefore its
+    mean) closely tracks the full population's, rather than cherry-
+    picking near-mean-length articles only. See report Section 8.
+
+Optional fractional dev-sample mode (--sample-frac):
+    Stratified-by-label random fraction of the data, for fast local
+    iteration only -- output directory is auto-suffixed so it can't be
+    mistaken for an official run. Mutually exclusive with
+    --target-per-class.
 """
 
 from __future__ import annotations
@@ -68,6 +84,164 @@ TOKEN_PATTERN = r"(?u)[a-z']+"
 # and capped so KNN distance computations stay tractable. See report for
 # how this number was chosen.
 SVD_N_COMPONENTS = 300
+
+# -------------------------------------------------------------------
+# Vocabulary size controls
+# -------------------------------------------------------------------
+MIN_DF = 5           # a token must appear in >= 5 TRAINING documents
+MAX_DF = 0.95        # drop tokens appearing in > 95% of TRAINING documents
+MAX_FEATURES = {
+    "bow_unigram": 15_000,
+    "tfidf_unigram": 15_000,
+    "tfidf_uni_bigram": 30_000,  # higher cap: bigram vocabulary is much larger
+}
+
+DEFAULT_TARGET_PER_CLASS = 3000
+
+
+# -------------------------------------------------------------------
+# Optional fractional dev-sample (fast iteration only)
+# -------------------------------------------------------------------
+
+def apply_dev_sample(dataframe: pd.DataFrame, sample_frac: float) -> pd.DataFrame:
+    """
+    Stratified (by label) random downsample of the FULL dataset, used
+    only for fast iteration / debugging -- see --target-per-class for
+    the length-representative, exact-count downsampling used for actual
+    experiments.
+
+    Uses an explicit per-group loop (rather than groupby().apply()) so
+    the "label" column is guaranteed to stay in the output regardless
+    of pandas version.
+    """
+    sampled_parts = [
+        group.sample(frac=sample_frac, random_state=RANDOM_SEED)
+        for _, group in dataframe.groupby("label")
+    ]
+    sampled = pd.concat(sampled_parts, ignore_index=True)
+    return sampled
+
+
+# -------------------------------------------------------------------
+# Optional exact-count, length-representative downsampling
+# -------------------------------------------------------------------
+
+def apply_length_balanced_sample(
+    dataframe: pd.DataFrame,
+    target_per_class: int,
+    length_col: str = "clean_title_body",
+    n_bins: int = 5,
+    random_seed: int = RANDOM_SEED,
+) -> pd.DataFrame:
+    """
+    For each label class, take an EXACT `target_per_class` articles,
+    selected via length-quantile-stratified sampling rather than plain
+    random sampling.
+
+    Why quantile-stratified instead of either (a) plain random sampling
+    or (b) filtering to only near-mean-length articles:
+      (a) Plain random sampling usually lands close to the population
+          mean for n=3000, but "usually close" isn't the same as
+          "verified close" -- and it does nothing to preserve the
+          *shape* of the length distribution (spread, skew), only the
+          mean tends to converge.
+      (b) Filtering down to only articles whose length is close to the
+          mean would directly bias the sample against naturally short
+          or long articles, which are a real part of the population the
+          model will eventually need to classify. That approach was
+          considered and rejected -- it optimizes for a summary
+          statistic while damaging real-world representativeness.
+    Quantile-stratified sampling buckets each class's articles into
+    `n_bins` equal-sized bins by word count, then samples proportionally
+    from every bin. This keeps the sampled subset's word-count mean AND
+    spread close to the full class's, by construction, rather than by
+    luck.
+
+    Returns a dataframe with exactly `target_per_class` rows per label
+    (fewer only if a class has fewer than `target_per_class` rows to
+    begin with, which is not the case for WELFake's complete-case file).
+    """
+    working = dataframe.copy()
+    working["_word_count"] = (
+        working[length_col].fillna("").str.split().apply(len)
+    )
+
+    sampled_parts = []
+    for label_value, group in working.groupby("label"):
+        group = group.copy()
+        try:
+            group["_length_bin"] = pd.qcut(
+                group["_word_count"], q=n_bins, duplicates="drop"
+            )
+        except ValueError:
+            # Degenerate case (e.g. all articles the same length, or too
+            # few rows for n_bins) -- fall back to a single bin, which
+            # reduces to plain random sampling within the class.
+            group["_length_bin"] = 0
+
+        bins = sorted(group["_length_bin"].unique(), key=str)
+        n_bins_actual = len(bins)
+        per_bin_target = target_per_class // n_bins_actual
+        remainder = target_per_class - per_bin_target * n_bins_actual
+
+        bin_samples = []
+        for i, bin_value in enumerate(bins):
+            bin_group = group[group["_length_bin"] == bin_value]
+            n_take = per_bin_target + (1 if i < remainder else 0)
+            n_take = min(n_take, len(bin_group))
+            bin_samples.append(
+                bin_group.sample(n=n_take, random_state=random_seed)
+            )
+
+        class_sample = pd.concat(bin_samples)
+
+        # If some bins were too small to fill their quota, top up from
+        # whatever's left in the class so we still hit target_per_class
+        # exactly (as long as the class itself has enough rows).
+        shortfall = target_per_class - len(class_sample)
+        if shortfall > 0:
+            remaining = group.drop(class_sample.index)
+            top_up = remaining.sample(
+                n=min(shortfall, len(remaining)), random_state=random_seed
+            )
+            class_sample = pd.concat([class_sample, top_up])
+
+        sampled_parts.append(class_sample.drop(columns=["_length_bin"]))
+
+    result = (
+        pd.concat(sampled_parts)
+        .drop(columns=["_word_count"])
+        .reset_index(drop=True)
+    )
+    return result
+
+
+def length_distribution_check(
+    full_df: pd.DataFrame,
+    sampled_df: pd.DataFrame,
+    length_col: str = "clean_title_body",
+) -> dict:
+    """
+    Compares word-count mean/std between the full population and the
+    downsampled subset, per label, so the report can show -- not just
+    claim -- that the sample's length distribution tracks the
+    population's.
+    """
+    def stats_by_label(frame: pd.DataFrame) -> dict:
+        word_counts = frame[length_col].fillna("").str.split().apply(len)
+        out = {}
+        for label_value, group_counts in word_counts.groupby(frame["label"]):
+            out[str(label_value)] = {
+                "mean": round(float(group_counts.mean()), 2),
+                "std": round(float(group_counts.std()), 2),
+                "n": int(len(group_counts)),
+            }
+        return out
+
+    return {
+        "population": stats_by_label(full_df),
+        "sample": stats_by_label(sampled_df),
+    }
 
 
 # -------------------------------------------------------------------
@@ -114,23 +288,33 @@ def build_vectorizer(kind: str):
     """
     kind in {"bow_unigram", "tfidf_unigram", "tfidf_uni_bigram"}
     """
+    max_features = MAX_FEATURES[kind]
     if kind == "bow_unigram":
         return CountVectorizer(
             token_pattern=TOKEN_PATTERN,
             ngram_range=(1, 1),
             lowercase=False,  # already lowercased in Part 2
+            min_df=MIN_DF,
+            max_df=MAX_DF,
+            max_features=max_features,
         )
     if kind == "tfidf_unigram":
         return TfidfVectorizer(
             token_pattern=TOKEN_PATTERN,
             ngram_range=(1, 1),
             lowercase=False,
+            min_df=MIN_DF,
+            max_df=MAX_DF,
+            max_features=max_features,
         )
     if kind == "tfidf_uni_bigram":
         return TfidfVectorizer(
             token_pattern=TOKEN_PATTERN,
             ngram_range=(1, 2),
             lowercase=False,
+            min_df=MIN_DF,
+            max_df=MAX_DF,
+            max_features=max_features,
         )
     raise ValueError(f"Unknown vectorizer kind: {kind}")
 
@@ -253,7 +437,19 @@ def save_vocabulary(vocabulary: list[str], out_dir: Path, prefix: str) -> None:
 # Main pipeline
 # -------------------------------------------------------------------
 
-def run_pipeline(input_path: Path, output_dir: Path, svd_n_components: int) -> dict:
+def run_pipeline(
+    input_path: Path,
+    output_dir: Path,
+    svd_n_components: int,
+    sample_frac: float | None = None,
+    target_per_class: int | None = None,
+) -> dict:
+    if sample_frac is not None and target_per_class is not None:
+        raise ValueError(
+            "--sample-frac and --target-per-class are mutually exclusive "
+            "-- pick one downsampling strategy."
+        )
+
     print("Loading Part 2 preprocessed dataset...")
     df = pd.read_csv(input_path)
 
@@ -262,7 +458,7 @@ def run_pipeline(input_path: Path, output_dir: Path, svd_n_components: int) -> d
         raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
 
     print(f"Input rows: {len(df):,}")
-    if len(df) != 62590:
+    if sample_frac is None and target_per_class is None and len(df) != 62590:
         print(
             f"WARNING: expected 62,590 complete-case rows per project handoff "
             f"docs, got {len(df):,}. Continuing anyway."
@@ -270,6 +466,47 @@ def run_pipeline(input_path: Path, output_dir: Path, svd_n_components: int) -> d
 
     for col in ["clean_title", "clean_body", "clean_title_body"]:
         df[col] = df[col].fillna("")
+
+    sampling_method = "none"
+    length_check = None
+    is_dev_sample = False
+
+    if target_per_class is not None:
+        sampling_method = "length_stratified_downsample"
+        class_counts = df["label"].value_counts()
+        too_small = class_counts[class_counts < target_per_class]
+        if len(too_small) > 0:
+            raise ValueError(
+                f"--target-per-class={target_per_class} exceeds available "
+                f"rows for label(s): {too_small.to_dict()}. Lower the "
+                "target or check the input file."
+            )
+        full_df_for_check = df
+        df = apply_length_balanced_sample(df, target_per_class)
+        length_check = length_distribution_check(full_df_for_check, df)
+        print(
+            f"*** LENGTH-STRATIFIED DOWNSAMPLE: {target_per_class:,} per "
+            f"class -> {len(df):,} rows total. Word-count mean/std by "
+            "class (population vs sample) recorded in the report -- "
+            "check feature_engineering_report.json['length_distribution_check']. ***"
+        )
+        for label_value, pop_stats in length_check["population"].items():
+            sample_stats = length_check["sample"][label_value]
+            print(
+                f"    label={label_value}: population mean={pop_stats['mean']} "
+                f"(n={pop_stats['n']}) vs sample mean={sample_stats['mean']} "
+                f"(n={sample_stats['n']})"
+            )
+    elif sample_frac is not None:
+        sampling_method = "random_stratified_fraction"
+        is_dev_sample = True
+        original_rows = len(df)
+        df = apply_dev_sample(df, sample_frac)
+        print(
+            f"*** DEV SAMPLE MODE: stratified sample_frac={sample_frac} -> "
+            f"{len(df):,} rows (from {original_rows:,}). "
+            "DO NOT use this run's numbers as final results. ***"
+        )
 
     print("Creating stratified 80/10/10 train/val/test split "
           f"(random_state={RANDOM_SEED})...")
@@ -289,11 +526,21 @@ def run_pipeline(input_path: Path, output_dir: Path, svd_n_components: int) -> d
         "student": "Ming",
         "project_part": "Part 3 - Feature Engineering and Dimensionality Reduction",
         "random_seed": RANDOM_SEED,
+        "sampling_method": sampling_method,
+        "is_dev_sample": is_dev_sample,
+        "target_per_class": target_per_class,
+        "dev_sample_frac": sample_frac,
+        "length_distribution_check": length_check,
         "input_rows": int(len(df)),
         "split_sizes": {
             name: int(len(ids)) for name, ids in split_by_name.items()
         },
         "svd_n_components_requested": svd_n_components,
+        "vectorizer_config": {
+            "min_df": MIN_DF,
+            "max_df": MAX_DF,
+            "max_features": MAX_FEATURES,
+        },
         "input_settings": {},
     }
 
@@ -390,6 +637,8 @@ def run_pipeline(input_path: Path, output_dir: Path, svd_n_components: int) -> d
 
 
 def main() -> None:
+    global MIN_DF, MAX_DF, MAX_FEATURES
+
     parser = argparse.ArgumentParser(
         description="Run Part 3 feature engineering + dimensionality "
         "reduction on the WELFake Part 2 preprocessed dataset."
@@ -411,16 +660,106 @@ def main() -> None:
         help=f"Target number of TruncatedSVD components (default: "
         f"{SVD_N_COMPONENTS}).",
     )
+    parser.add_argument(
+        "--min-df",
+        type=int,
+        default=MIN_DF,
+        help=f"Minimum document frequency for a token to be kept "
+        f"(default: {MIN_DF}).",
+    )
+    parser.add_argument(
+        "--max-df",
+        type=float,
+        default=MAX_DF,
+        help=f"Maximum document frequency (as a fraction of training docs) "
+        f"for a token to be kept (default: {MAX_DF}).",
+    )
+    parser.add_argument(
+        "--max-features-unigram",
+        type=int,
+        default=MAX_FEATURES["bow_unigram"],
+        help="Vocabulary cap for bow_unigram and tfidf_unigram "
+        f"(default: {MAX_FEATURES['bow_unigram']:,}).",
+    )
+    parser.add_argument(
+        "--max-features-bigram",
+        type=int,
+        default=MAX_FEATURES["tfidf_uni_bigram"],
+        help="Vocabulary cap for tfidf_uni_bigram "
+        f"(default: {MAX_FEATURES['tfidf_uni_bigram']:,}).",
+    )
+    parser.add_argument(
+        "--target-per-class",
+        type=int,
+        default=None,
+        help=(
+            "If set (e.g. 3000), downsample to EXACTLY this many articles "
+            "per label class, using length-quantile-stratified sampling "
+            "so the sample's word-count distribution matches the full "
+            "population's. This is the recommended downsampling mode for "
+            "actual experiments. Mutually exclusive with --sample-frac."
+        ),
+    )
+    parser.add_argument(
+        "--sample-frac",
+        type=float,
+        default=None,
+        help=(
+            "If set (e.g. 0.2), run on a stratified-by-label random "
+            "sample of this fraction of the input rows instead of the "
+            "full dataset. FOR FAST ITERATION / DEBUGGING ONLY -- never "
+            "use this for the group's final reported numbers. The "
+            "output directory is automatically suffixed with "
+            "'_devsample_<pct>pct'. Mutually exclusive with "
+            "--target-per-class."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.sample_frac is not None and args.target_per_class is not None:
+        raise ValueError(
+            "--sample-frac and --target-per-class are mutually exclusive "
+            "-- pick one downsampling strategy."
+        )
+
+    MIN_DF = args.min_df
+    MAX_DF = args.max_df
+    MAX_FEATURES = {
+        "bow_unigram": args.max_features_unigram,
+        "tfidf_unigram": args.max_features_unigram,
+        "tfidf_uni_bigram": args.max_features_bigram,
+    }
 
     input_path = Path(args.input)
     if not input_path.exists():
         raise FileNotFoundError(f"Input file was not found: {input_path.resolve()}")
 
+    output_dir = Path(args.output_dir)
+    if args.sample_frac is not None:
+        if not (0 < args.sample_frac < 1):
+            raise ValueError("--sample-frac must be between 0 and 1 (exclusive).")
+        pct = round(args.sample_frac * 100)
+        output_dir = output_dir.parent / f"{output_dir.name}_devsample_{pct}pct"
+        print(
+            f"NOTE: --sample-frac={args.sample_frac} given. Output will be "
+            f"written to '{output_dir}', separate from any full-data run."
+        )
+    elif args.target_per_class is not None:
+        output_dir = (
+            output_dir.parent
+            / f"{output_dir.name}_balanced_{args.target_per_class}perclass"
+        )
+        print(
+            f"NOTE: --target-per-class={args.target_per_class} given. "
+            f"Output will be written to '{output_dir}'."
+        )
+
     run_pipeline(
         input_path=input_path,
-        output_dir=Path(args.output_dir),
+        output_dir=output_dir,
         svd_n_components=args.svd_components,
+        sample_frac=args.sample_frac,
+        target_per_class=args.target_per_class,
     )
 
 
