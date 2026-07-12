@@ -3,6 +3,8 @@
 import os
 import kagglehub
 from kagglehub import KaggleDatasetAdapter
+import shutil
+from pathlib import Path
 
 # Set the path to the file you'd like to load
 os.environ["KAGGLEHUB_CACHE"] = "./data"
@@ -22,3 +24,17 @@ df = kagglehub.load_dataset(
 print("First 5 records:", df.head())
 print(df.dtypes)
 print(df.describe())
+
+downloaded_path = kagglehub.dataset_download("saurabhshahane/fake-news-classification")
+src_file = Path(downloaded_path) / file_path
+
+dest_dir = Path("./data")
+dest_dir.mkdir(exist_ok=True)
+dest_file = dest_dir / file_path
+
+shutil.copy(src_file, dest_file)
+print(f"File save at: {dest_file}")
+
+cache_root = Path("./data/datasets")
+if cache_root.exists():
+    shutil.rmtree(cache_root)

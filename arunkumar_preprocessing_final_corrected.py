@@ -4,7 +4,7 @@ Part 2: Text Preprocessing Pipeline
 Student: Arunkumar Krishnamoorthy
 
 Input file:
-    WELFake after cleaning.csv.gz
+    handoff/WELFake_stage1_complete_cases.csv.gz
 
 Expected label mapping:
     0 = real news
