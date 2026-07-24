@@ -30,7 +30,6 @@ Example:
         --target-per-class 1500 \
         --max-features-unigram 3000 \
         --max-features-bigram 6000 \
-        # --svd-components 150
 """
 
 import argparse
