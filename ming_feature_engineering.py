@@ -30,7 +30,7 @@ Example:
         --target-per-class 1500 \
         --max-features-unigram 3000 \
         --max-features-bigram 6000 \
-        --svd-components 150
+        # --svd-components 150
 """
 
 import argparse
@@ -117,13 +117,8 @@ def build_vectorizer(kind, max_features):
 
 def run_pipeline(input_path, output_dir, target_per_class, max_features_unigram, max_features_bigram):
     df = pd.read_csv(input_path)
-    # required_columns = ["article_id", "label", "clean_title", "clean_body", "clean_title_body"]
-
-    # for col in required_columns:
-    #     if col not in df.columns:
-    #         raise ValueError(f"Missing required column: {col}")
-    # for col in ["clean_title", "clean_body", "clean_title_body"]:
-    #     df[col] = df[col].fillna("")
+    for col in ["clean_title", "clean_body", "clean_title_body"]:
+        df[col] = df[col].fillna("")
 
     print(f"Input rows: {len(df):,}")
     df = downsample(df, target_per_class)
@@ -141,12 +136,6 @@ def run_pipeline(input_path, output_dir, target_per_class, max_features_unigram,
     }
     print("Split sizes:", {name: len(ids) for name, ids in ids_by_split.items()})
 
-    max_features_by_kind = {
-        "bow_unigram": max_features_unigram,
-        "tfidf_unigram": max_features_unigram,
-        "tfidf_uni_bigram": max_features_bigram,
-    }
-
     features_dir = output_dir / "features"
     features_dir.mkdir(parents=True, exist_ok=True)
 
@@ -159,8 +148,9 @@ def run_pipeline(input_path, output_dir, target_per_class, max_features_unigram,
         val_text = df_by_id.loc[ids_by_split["val"], column]
         test_text = df_by_id.loc[ids_by_split["test"], column]
 
-        for kind in ["bow_unigram", "tfidf_unigram", "tfidf_uni_bigram"]:
-            vectorizer = build_vectorizer(kind, max_features_by_kind[kind])
+        for kind in ["tfidf_unigram", "tfidf_uni_bigram"]:
+            max_features  = max_features_bigram if "bigram" in kind else max_features_unigram
+            vectorizer = build_vectorizer(kind, max_features)
 
             X_train = vectorizer.fit_transform(train_text)
             X_val = vectorizer.transform(val_text)
@@ -197,34 +187,23 @@ def run_pipeline(input_path, output_dir, target_per_class, max_features_unigram,
     print(f"Split assignment saved to: {(output_dir / 'split_assignment.csv').resolve()}")
 
 
-# -----------------------------------------------------------------
-# Command-line interface
-# -----------------------------------------------------------------
-
 def main():
     parser = argparse.ArgumentParser(
         description="Part 3: downsampling + Bag-of-Words/TF-IDF feature engineering for WELFake."
     )
-    parser.add_argument("--input", required=True, help="Path to WELFake_part2_preprocessed.csv or .csv.gz")
-    parser.add_argument("--output-dir", default="part3_output", help="Folder where output files will be saved")
-    parser.add_argument(
-        "--target-per-class",
-        type=int,
-        required=True,
-        help="Exact number of articles to keep per label, e.g. 1500 for 1500 real + 1500 fake",
-    )
-    parser.add_argument(
-        "--max-features-unigram",
-        type=int,
-        default=3000,
-        help="Vocabulary size cap for bow_unigram and tfidf_unigram (default: 3000)",
-    )
-    parser.add_argument(
-        "--max-features-bigram",
-        type=int,
-        default=6000,
-        help="Vocabulary size cap for tfidf_uni_bigram (default: 6000)",
-    )
+    parser.add_argument("--input",
+                        required=True, help="Path to WELFake_part2_preprocessed.csv or .csv.gz")
+    parser.add_argument("--output-dir",
+                        default="part3_output", help="Folder where output files will be saved")
+    parser.add_argument("--target-per-class",
+                        type=int, required=True,
+                        help="Exact number of articles to keep per label, e.g. 1500 for 1500 real + 1500 fake")
+    parser.add_argument("--max-features-unigram",
+                        type=int, default=3000,
+                        help="Vocabulary size cap for bow_unigram and tfidf_unigram (default: 3000)")
+    parser.add_argument("--max-features-bigram",
+                        type=int, default=6000,
+                        help="Vocabulary size cap for tfidf_uni_bigram (default: 6000)")
     args = parser.parse_args()
 
     input_path = Path(args.input)
